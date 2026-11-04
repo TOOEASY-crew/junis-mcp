@@ -1,0 +1,68 @@
+{
+  "name": "junis",
+  "version": "0.5.2",
+  "description": "Local MCP server for shell, files, browser, Jupyter and macOS apps, with a policy file and audit log",
+  "license": "MIT",
+  "author": "TOOEASY Inc. <contact@junis.ai>",
+  "homepage": "https://junis.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TOOEASY-crew/junis-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TOOEASY-crew/junis-mcp/issues",
+    "email": "contact@junis.ai"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "ai-agent",
+    "ai-agents",
+    "computer-use",
+    "device-control",
+    "browser-automation",
+    "desktop-automation",
+    "jupyter",
+    "cli",
+    "junis"
+  ],
+  "type": "module",
+  "bin": {
+    "junis": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/cli/index.ts --format esm --dts --out-dir dist/cli && tsup src/server/mcp.ts --format esm --out-dir dist/server && tsup src/server/stdio.ts --format esm --out-dir dist/server",
+    "dev": "tsx src/cli/index.ts",
+    "type-check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.2.1",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "browserclaw": "^0.2.7",
+    "commander": "^12.0.0",
+    "execa": "^8.0.0",
+    "glob": "^11.0.0",
+    "node-notifier": "^10.0.1",
+    "open": "^10.1.0",
+    "playwright-core": "^1.50.0",
+    "ws": "^8.18.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-notifier": "^8.0.5",
+    "@types/ws": "^8.5.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "files": [
+    "dist/"
+  ]
+}
