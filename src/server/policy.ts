@@ -2,7 +2,9 @@
 //
 // The server decides *what* an agent asks for; this file is the user's own last line of defence on the
 // device, applied before any tool runs:
-//   deny_read_paths        globs no tool may read (keys, credentials, browser cookie DBs, this CLI's token)
+//   deny_read_paths        globs no tool may read (keys, cloud/CLI credentials, browser cookie DBs, this CLI's token);
+//                          case-insensitive on macOS/Windows; also checked for list_directory, search_code
+//                          (directory + each result line), notebook_* and browser_navigate file:// URLs
 //   deny_command_patterns  extra regexes for execute_command / cron_create (built-in: catastrophic forms only)
 //   builtin_command_guards set false to drop the built-in command patterns (default true)
 //   read_only              true → every tool that writes files, runs commands or changes the system is refused
@@ -11,6 +13,10 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
+
+/** macOS and Windows compare paths without regard to case, so a pattern must too (2026-11-06). */
+const CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
 
 export interface Policy {
   read_only: boolean;
@@ -29,6 +35,7 @@ export interface LoadedPolicy {
 export const DEFAULT_DENY_READ_PATHS: readonly string[] = [
   "~/.ssh/id_*",
   "~/.ssh/*_key",
+  "~/.ssh/*.pem",
   "~/.aws/credentials",
   "~/.gnupg/**",
   "~/Library/Keychains/**",
@@ -37,6 +44,19 @@ export const DEFAULT_DENY_READ_PATHS: readonly string[] = [
   "~/Library/Application Support/{Google/Chrome,BraveSoftware,Microsoft Edge}/**/Login Data",
   "~/.config/{google-chrome,chromium}/**/Cookies",
   "~/.config/{google-chrome,chromium}/**/Login Data",
+  "~/.junis-kit/credentials.json",
+  "~/.kube/config",
+  "~/.azure/**",
+  "~/.config/gh/hosts.yml",
+  "~/.npmrc",
+  "~/.docker/config.json",
+  "~/.netrc",
+  "~/.pgpass",
+  "~/.git-credentials",
+  "~/Library/Application Support/Firefox/**/cookies.sqlite",
+  "~/Library/Application Support/Firefox/**/logins.json",
+  "~/.mozilla/firefox/**/cookies.sqlite",
+  "~/.mozilla/firefox/**/logins.json",
 ];
 
 export function policyFilePath(): string {
@@ -140,7 +160,7 @@ function globSegmentToRegExp(glob: string): string {
 /** Compile a glob (after ~ expansion) to an anchored RegExp. Exported for tests. */
 export function globToRegExp(pattern: string): RegExp {
   const alternatives = expandBraces(pattern).map(globSegmentToRegExp);
-  return new RegExp(`^(?:${alternatives.join("|")})$`);
+  return new RegExp(`^(?:${alternatives.join("|")})$`, CASE_INSENSITIVE_FS ? "i" : "");
 }
 
 function homeDirs(): string[] {
@@ -169,7 +189,8 @@ function bestEffortRealpath(p: string): string {
   const tail: string[] = [];
   for (;;) {
     try {
-      const real = fs.realpathSync(probe);
+      // .native returns the on-disk spelling (macOS folds case in the JS implementation's cache)
+      const real = fs.realpathSync.native(probe);
       return tail.length ? path.join(real, ...tail.reverse()) : real;
     } catch {
       const parent = path.dirname(probe);
@@ -187,9 +208,14 @@ function pathCandidates(p: string): string[] {
   return real === resolved ? [resolved] : [resolved, real];
 }
 
-/** The deny_read_paths pattern a path matches, or null. Follows symlinks; relative paths resolve against cwd. */
-export function isReadDenied(filePath: string, policy: Policy = loadPolicy().policy): string | null {
+/**
+ * The deny_read_paths pattern a path matches, or null. Follows symlinks; relative paths resolve against cwd.
+ * `asDirectory` (list_directory, search_code): the tool reads what is *inside* the path, so each candidate is
+ * also tried as "a file in that directory" — "~/.ssh/*" then covers "~/.ssh" itself.
+ */
+export function isReadDenied(filePath: string, policy: Policy = loadPolicy().policy, asDirectory = false): string | null {
   const candidates = pathCandidates(filePath);
+  if (asDirectory) for (const c of [...candidates]) candidates.push(c + path.sep + "_");
   for (const pattern of policy.deny_read_paths) {
     for (const expanded of expandHome(pattern)) {
       let re: RegExp;
@@ -202,6 +228,14 @@ export function isReadDenied(filePath: string, policy: Policy = loadPolicy().pol
     }
   }
   return null;
+}
+
+/** Drop `path:line: text` lines whose file is read-denied (search_code output). */
+export function filterDeniedPaths(lines: string[], policy: Policy = loadPolicy().policy): string[] {
+  return lines.filter((line) => {
+    const m = /^(.+?):\d+:/.exec(line);
+    return !(m && isReadDenied(m[1], policy));
+  });
 }
 
 // ── command guards ───────────────────────────────────────────────────────────────────────
@@ -277,7 +311,23 @@ const FILE_READ_TOOLS: Record<string, (args: Record<string, unknown>) => string[
   share_file: (a) => (typeof a.path === "string" ? [a.path] : []),
   edit_block: (a) => (typeof a.path === "string" ? [a.path] : []),
   browser_upload: (a) => (Array.isArray(a.paths) ? a.paths.filter((p): p is string => typeof p === "string") : []),
+  list_directory: (a) => (typeof a.path === "string" ? [a.path] : []),
+  search_code: (a) => (typeof a.directory === "string" ? [a.directory] : []),
+  notebook_read: (a) => (typeof a.path === "string" ? [a.path] : []),
+  notebook_edit_cell: (a) => (typeof a.path === "string" ? [a.path] : []),
+  notebook_execute: (a) => (typeof a.path === "string" ? [a.path] : []),
+  browser_navigate: (a) => {
+    if (typeof a.url !== "string" || !a.url.toLowerCase().startsWith("file:")) return [];
+    try {
+      return [fileURLToPath(a.url)];
+    } catch {
+      return [];
+    }
+  },
 };
+
+/** Tools whose path argument is a directory the tool reads into (see isReadDenied asDirectory). */
+const DIRECTORY_READ_TOOLS = new Set(["list_directory", "search_code"]);
 
 /** Tools whose argument is a shell command (deny_command_patterns applies). */
 const COMMAND_TOOLS = new Set(["execute_command", "cron_create"]);
@@ -299,7 +349,7 @@ export function evaluatePolicy(tool: string, args: Record<string, unknown> = {},
   const readPaths = FILE_READ_TOOLS[tool];
   if (readPaths) {
     for (const p of readPaths(args)) {
-      const matched = isReadDenied(p, policy);
+      const matched = isReadDenied(p, policy, DIRECTORY_READ_TOOLS.has(tool));
       if (matched) {
         return {
           tool,

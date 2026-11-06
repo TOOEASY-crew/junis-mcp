@@ -209,12 +209,17 @@ that names the rule.
 {
   "read_only": false,
   "deny_read_paths": [
-    "~/.ssh/id_*", "~/.ssh/*_key", "~/.aws/credentials", "~/.gnupg/**", "~/Library/Keychains/**",
+    "~/.ssh/id_*", "~/.ssh/*_key", "~/.ssh/*.pem", "~/.aws/credentials", "~/.gnupg/**", "~/Library/Keychains/**",
     "~/.junis/config.json",
     "~/Library/Application Support/{Google/Chrome,BraveSoftware,Microsoft Edge}/**/Cookies",
     "~/Library/Application Support/{Google/Chrome,BraveSoftware,Microsoft Edge}/**/Login Data",
     "~/.config/{google-chrome,chromium}/**/Cookies",
-    "~/.config/{google-chrome,chromium}/**/Login Data"
+    "~/.config/{google-chrome,chromium}/**/Login Data",
+    "~/.junis-kit/credentials.json", "~/.kube/config", "~/.azure/**", "~/.config/gh/hosts.yml",
+    "~/.npmrc", "~/.docker/config.json", "~/.netrc", "~/.pgpass", "~/.git-credentials",
+    "~/Library/Application Support/Firefox/**/cookies.sqlite",
+    "~/Library/Application Support/Firefox/**/logins.json",
+    "~/.mozilla/firefox/**/cookies.sqlite", "~/.mozilla/firefox/**/logins.json"
   ],
   "deny_command_patterns": [],
   "builtin_command_guards": true
@@ -223,7 +228,7 @@ that names the rule.
 
 | Setting | Checked for | Notes |
 |---------|-------------|-------|
-| `deny_read_paths` | `read_file`, `edit_block`, `share_file`, `browser_upload` | Globs with `*`, `**`, `?`, `{a,b}` and `~`. Symlinks are resolved first. Your list replaces the default, and `[]` turns the check off. |
+| `deny_read_paths` | `read_file`, `edit_block`, `share_file`, `browser_upload`, `list_directory`, `search_code` (the directory, and matching lines from denied files are dropped), `notebook_read`, `notebook_edit_cell`, `notebook_execute`, `browser_navigate` with a `file://` URL | Globs with `*`, `**`, `?`, `{a,b}` and `~`. Symlinks are resolved first. Case is ignored on macOS and Windows. Your list replaces the default, and `[]` turns the check off. |
 | `deny_command_patterns` | `execute_command`, `cron_create` | Regular expressions matched against the command. |
 | `builtin_command_guards` | `execute_command`, `cron_create` | On by default. Refuses only destructive forms: `rm -rf /`, `mkfs`, `dd … of=/dev/…`, the fork bomb and redirects to a raw disk device. |
 | `read_only` | `write_file`, `edit_block`, `execute_command`, `cron_create`, `cron_delete`, `kill_process`, `browser_upload`, `share_file`, `notebook_edit_cell`, `notebook_add_cell`, `notebook_delete_cell`, `notebook_execute` | `true` refuses these 12 tools. |

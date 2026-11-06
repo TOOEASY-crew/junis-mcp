@@ -47,6 +47,7 @@ export class NotebookTools {
       "Read a Jupyter notebook (.ipynb) and return all cells with their types (code/markdown), source content, and output counts. Use this to understand notebook structure before making edits.",
       { path: z.string().describe("Path to the .ipynb notebook file") },
       async ({ path: filePath }) => {
+        enforcePolicy("notebook_read", { path: filePath });
         const nb = await readNotebook(filePath);
         const cells = nb.cells.map((cell, i) => ({
           index: i,

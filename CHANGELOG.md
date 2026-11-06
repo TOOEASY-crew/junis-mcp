@@ -8,6 +8,14 @@
   `local_token` in `~/.junis/config.json`; `--no-token` is refused in relay mode. A background service
   started from an older config without a saved token uses a token that is not written anywhere until
   `npx junis` has run once. `--local` behaves as before: the token is optional on loopback.
+- **`deny_read_paths` covers more tools and more files.** `list_directory` and `search_code` are refused
+  on a denied directory, lines from denied files are dropped from `search_code` results, `notebook_read`,
+  `notebook_edit_cell` and `notebook_execute` are checked, and `browser_navigate` refuses a `file://` URL
+  that points at a denied path. Patterns match without regard to case on macOS and Windows, where the file
+  system does the same (`~/.SSH/ID_rsa` was readable before). The default list now also includes
+  `~/.ssh/*.pem`, `~/.junis-kit/credentials.json`, `~/.kube/config`, `~/.azure/**`, `~/.config/gh/hosts.yml`,
+  `~/.npmrc`, `~/.docker/config.json`, `~/.netrc`, `~/.pgpass`, `~/.git-credentials` and Firefox
+  `cookies.sqlite` / `logins.json`. A refused call is written to the audit log with the path or URL.
 
 ## 0.5.2 — 2026-11-05
 

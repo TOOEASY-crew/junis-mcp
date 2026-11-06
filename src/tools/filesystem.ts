@@ -8,6 +8,7 @@ import path from "path";
 import { glob } from "glob";
 import { z } from "zod";
 import { enforcePolicy } from '../server/permissions.js';
+import { filterDeniedPaths, isReadDenied } from "../server/policy.js";
 import { auditLog, summarizeArgs } from "../server/audit.js";
 import { RelayClient } from "../relay/client.js";
 
@@ -271,6 +272,7 @@ export class FilesystemTools {
         path: z.string().describe("Directory path to list"),
       },
       async ({ path: dirPath }) => {
+        enforcePolicy("list_directory", { path: dirPath });
         try {
           const entries = await fs.readdir(dirPath, { withFileTypes: true });
           const lines = entries.map((e) => `${e.isDirectory() ? "📁" : "📄"} ${e.name}`);
@@ -300,6 +302,7 @@ export class FilesystemTools {
         file_pattern: z.string().optional().default("**/*").describe("Glob pattern to filter files (e.g. '**/*.ts', '*.py', 'src/**/*.js')"),
       },
       async ({ pattern, directory, file_pattern }) => {
+        enforcePolicy("search_code", { directory });
         // execFileAsync takes an argument array, so there is no shell injection
         try {
           const { stdout } = await execFileAsync(
@@ -307,12 +310,15 @@ export class FilesystemTools {
             buildRgArgs(pattern, directory, file_pattern),
             { timeout: 10000 }
           );
-          return { content: [{ type: "text", text: stdout || "No results" }] };
+          // rg prints paths as given (relative to cwd or absolute); lines from read-denied files are dropped
+          const text = filterDeniedPaths(stdout.split("\n")).join("\n");
+          return { content: [{ type: "text", text: text.trim() ? text : "No results" }] };
         } catch {
           const safeDirectory = path.resolve(directory);
           const files = await glob(file_pattern, { cwd: safeDirectory });
           const results: string[] = [];
           for (const file of files.slice(0, 100)) {
+            if (isReadDenied(path.join(safeDirectory, file))) continue;
             try {
               const content = await fs.readFile(
                 path.join(safeDirectory, file),

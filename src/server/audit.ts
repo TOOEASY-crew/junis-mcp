@@ -47,7 +47,16 @@ export function summarizeArgs(tool: string, args: Record<string, unknown> = {}):
     case "share_file":
     case "read_file":
     case "notebook_execute":
+    case "notebook_read":
+    case "list_directory":
       summary = str(args.path);
+      break;
+    case "search_code":
+      // the pattern is the agent's query, not file content, but the directory is what the policy judges
+      summary = `directory=${str(args.directory)}`;
+      break;
+    case "browser_navigate":
+      summary = str(args.url);
       break;
     case "execute_command":
       summary = str(args.command) + (args.background ? " (background)" : "");

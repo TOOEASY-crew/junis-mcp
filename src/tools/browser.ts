@@ -108,6 +108,7 @@ export class BrowserTools {
         url: z.string().describe("Full URL to navigate to (include https://)"),
       },
       ({ url }) => this.withLock(async () => {
+        enforcePolicy("browser_navigate", { url });
         if (!this.browser) throw new Error("Browser not started. Call browser_start first.");
         if (!this.page) {
           this.page = await this.browser.open(url);

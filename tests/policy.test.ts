@@ -171,6 +171,39 @@ describe("isCommandDenied", () => {
   });
 });
 
+describe("deny_read_paths hardening (2026-11-06)", () => {
+  test("defaults include the kit key, kube/azure/gh/npm/docker credentials and Firefox cookies", () => {
+    const d = pol.DEFAULT_DENY_READ_PATHS;
+    for (const p of ["~/.junis-kit/credentials.json", "~/.kube/config", "~/.azure/**", "~/.config/gh/hosts.yml", "~/.npmrc", "~/.docker/config.json", "~/.netrc", "~/.pgpass", "~/.git-credentials", "~/.ssh/*.pem"]) {
+      assert.ok(d.includes(p), p);
+    }
+  });
+  test("case-insensitive match on case-insensitive filesystems", () => {
+    const home = os.homedir();
+    const policy = { ...pol.loadPolicy().policy, deny_read_paths: ["~/.ssh/id_*"] };
+    assert.equal(pol.isReadDenied(path.join(home, ".ssh", "id_ed25519"), policy), "~/.ssh/id_*");
+    const upper = pol.isReadDenied(path.join(home, ".SSH", "ID_ed25519"), policy);
+    if (process.platform === "darwin" || process.platform === "win32") assert.equal(upper, "~/.ssh/id_*");
+    else assert.equal(upper, null);
+  });
+  test("list_directory / search_code / notebook_* / browser_navigate file:// are policy-checked", () => {
+    const home = os.homedir();
+    writePolicy({ deny_read_paths: ["~/.ssh/**"] });
+    assert.ok(pol.evaluatePolicy("list_directory", { path: path.join(home, ".ssh") }));
+    assert.ok(pol.evaluatePolicy("search_code", { directory: path.join(home, ".ssh") }));
+    assert.ok(pol.evaluatePolicy("notebook_read", { path: path.join(home, ".ssh", "x.ipynb") }));
+    assert.ok(pol.evaluatePolicy("browser_navigate", { url: "file://" + path.join(home, ".ssh", "id_rsa") }));
+    assert.equal(pol.evaluatePolicy("browser_navigate", { url: "https://example.com" }), null);
+    assert.equal(pol.evaluatePolicy("list_directory", { path: home }), null);
+  });
+  test("filterDeniedPaths drops denied files from search output", () => {
+    const home = os.homedir();
+    writePolicy({ deny_read_paths: ["~/.ssh/**"] });
+    const lines = [`${path.join(home, ".ssh", "id_rsa")}:1: secret`, `${path.join(home, "proj", "a.ts")}:3: ok`];
+    assert.deepEqual(pol.filterDeniedPaths(lines), [lines[1]]);
+  });
+});
+
 describe("evaluatePolicy / checkPermission", () => {
   test("default policy: writes and commands allowed, protected reads denied", () => {
     assert.equal(perm.checkPermission("execute_command", { command: "ls" }), undefined);
