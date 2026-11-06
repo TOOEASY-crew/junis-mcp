@@ -85,6 +85,29 @@ describe("resolveLocalServerSettings", () => {
     assert.equal(r.host, "127.0.0.1");
   });
 
+  test("relay mode (requireToken) on loopback without a saved token generates and persists one", () => {
+    const gen = () => "GEN-RELAY";
+    const r = resolveLocalServerSettings({}, {}, { generateToken: gen, requireToken: true });
+    assert.equal(r.host, "127.0.0.1");
+    assert.equal(r.token, "GEN-RELAY");
+    assert.equal(r.generated, true);
+    assert.deepEqual(r.persist, { local_token: "GEN-RELAY" });
+  });
+  test("relay mode keeps a saved token and persists nothing", () => {
+    const r = resolveLocalServerSettings({}, { local_token: "saved" }, { generateToken: () => "X", requireToken: true });
+    assert.equal(r.token, "saved");
+    assert.deepEqual(r.persist, {});
+  });
+  test("relay daemon (no generator) without a saved token gets an ephemeral token and a warning", () => {
+    const r = resolveLocalServerSettings({}, {}, { requireToken: true });
+    assert.ok(typeof r.token === "string" && r.token.length >= 32);
+    assert.deepEqual(r.persist, {});
+    assert.ok(r.warnings.some((w) => /ephemeral|run npx junis/i.test(w)));
+  });
+  test("--no-token in relay mode is refused", () => {
+    assert.throws(() => resolveLocalServerSettings({ token: false }, {}, { requireToken: true }), /relay mode/);
+  });
+
   test("generateLocalToken is base64url, 32 chars, unique", () => {
     const a = generateLocalToken();
     const b = generateLocalToken();

@@ -134,11 +134,12 @@ function printEndpoint(local: ResolvedLocalServer, resolved: boolean): void {
 
 /**
  * Resolve the binding from --host/--port/--token flags plus config local_*, and remember flag values in the config.
- * Generates a token here when binding to a non-loopback address without one (printEndpoint prints it once).
+ * Generates a token here when binding to a non-loopback address without one, and in relay modes (the loopback
+ * server is always token-protected there; printEndpoint prints a new token once). --local keeps the token optional.
  */
 function resolveLocalServerForRun(
   options: { host?: string; port?: string; token?: string | false },
-  opts: { daemon: boolean }
+  opts: { daemon: boolean; relay: boolean }
 ): ResolvedLocalServer {
   let portFlag: number | undefined;
   if (options.port !== undefined) {
@@ -153,7 +154,7 @@ function resolveLocalServerForRun(
     local = resolveLocalServerSettings(
       { host: options.host, port: portFlag, token: options.token },
       loadLocalServerSettings(),
-      opts.daemon ? {} : { generateToken: generateLocalToken },
+      opts.daemon ? { requireToken: opts.relay } : { generateToken: generateLocalToken, requireToken: opts.relay },
     );
   } catch (e) {
     console.error(`❌ ${(e as Error).message}`);
@@ -334,7 +335,7 @@ program
     secureConfigDir();
 
     // Resolve the local server binding (flags > config > default 127.0.0.1:3000). The daemon reads config only.
-    const local = resolveLocalServerForRun(options, { daemon: Boolean(options.daemon) });
+    const local = resolveLocalServerForRun(options, { daemon: Boolean(options.daemon), relay: !options.local && !options.stdio });
 
 
     // --foreground: run in the foreground immediately, without prompts

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 — 2026-11-06
+
+### Security
+- **Relay mode always protects the local HTTP server with a bearer token.** `npx junis` (foreground or
+  background) generates a token on the first start without one, prints it once and saves it as
+  `local_token` in `~/.junis/config.json`; `--no-token` is refused in relay mode. A background service
+  started from an older config without a saved token uses a token that is not written anywhere until
+  `npx junis` has run once. `--local` behaves as before: the token is optional on loopback.
+
 ## 0.5.2 — 2026-11-05
 
 ### Security

@@ -37,6 +37,8 @@ export interface ResolvedLocalServer {
 export interface ResolveOptions {
   /** Called for a non-loopback host without a token. If absent (daemon), fall back to loopback and only log a warning. */
   generateToken?: () => string;
+  /** Relay modes: the loopback server is always token-protected (2026-11-06). */
+  requireToken?: boolean;
 }
 
 const HOST_RE = /^[A-Za-z0-9.\-:%[\]]+$/;
@@ -91,6 +93,7 @@ export function resolveLocalServerSettings(
   let token: string | undefined;
   let generated = false;
   if (flags.token === false) {
+    if (opts.requireToken) throw new Error("--no-token is not allowed in relay mode: the local server is always token-protected");
     if (!isLoopbackHost(host)) {
       throw new Error(`--no-token cannot be used with --host ${host}: a bearer token is required on a non-loopback address`);
     }
@@ -104,11 +107,17 @@ export function resolveLocalServerSettings(
     token = validToken(saved.local_token) ? saved.local_token : undefined;
   }
 
-  if (!isLoopbackHost(host) && token === undefined) {
+  if (token === undefined && (opts.requireToken || !isLoopbackHost(host))) {
     if (opts.generateToken) {
       token = opts.generateToken();
       generated = true;
       persist.local_token = token;
+    } else if (opts.requireToken) {
+      // daemon started from an older config: protect the server for this run, do not write the config from the daemon
+      token = generateLocalToken();
+      warnings.push(
+        "Local MCP server: no local_token in ~/.junis/config.json — using an ephemeral token for this run (run `npx junis` once to generate and save one)"
+      );
     } else {
       warnings.push(
         `A bearer token is required to bind ${host} but none is configured — falling back to ${DEFAULT_HOST} (run npx junis --host ${host} once to generate one)`

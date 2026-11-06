@@ -70,7 +70,8 @@ npx junis --local     # http://localhost:3000/mcp, reachable from this machine o
 claude mcp add --transport http junis-device http://localhost:3000/mcp
 ```
 
-Any program on this machine can call that server unless you set a token. See
+In relay mode the local server always requires a bearer token (generated once and saved to
+`~/.junis/config.json`; printed at start). `--local` keeps the token optional. See
 [Local HTTP server](#local-http-server).
 
 ## Examples
@@ -102,8 +103,8 @@ on.
 
 | Mode | Command | What it does |
 |------|---------|--------------|
-| Relay, foreground | `npx junis`, then *Foreground* (or `npx junis --foreground`) | Logs in through the browser, then keeps a WebSocket to junis.ai open in this terminal. The local HTTP server also runs. `Ctrl+C` stops it. |
-| Relay, background | `npx junis`, then *Background* | The same, registered as a user service that starts at login: launchd on macOS, systemd on Linux, a scheduled task on Windows. |
+| Relay, foreground | `npx junis`, then *Foreground* (or `npx junis --foreground`) | Logs in through the browser, then keeps a WebSocket to junis.ai open in this terminal. The token-protected local HTTP server also runs. `Ctrl+C` stops it. |
+| Relay, background | `npx junis`, then *Background* | The same, registered as a user service that starts at login: launchd on macOS, systemd on Linux, a scheduled task on Windows. The token-protected local HTTP server runs in the service. |
 | Local HTTP | `npx junis --local` | MCP server on `127.0.0.1:3000` and nothing else. If the port is taken, the next free port is used and printed. |
 | stdio | `npx junis --stdio` | The MCP client starts `junis` and talks over stdin and stdout. No network server. |
 
@@ -113,7 +114,7 @@ Options for the local HTTP server (`--local` and both relay modes):
 - `--host <addr>` binds another interface, for example `--host 0.0.0.0`. Any address other than
   loopback requires a bearer token. Pass one with `--token <value>`, or `junis` generates one, prints it
   once and saves it to `~/.junis/config.json`. Clients then send `Authorization: Bearer <token>`.
-- `--no-token` forgets a saved token (loopback only).
+- `--no-token` forgets a saved token (`--local` on loopback only; refused in relay mode).
 - `--port`, `--host` and `--token` are remembered, so the background service binds the same way.
 
 Other commands: `npx junis --reset` (log in again), `npx junis --version`, `npx junis --help`.
@@ -188,8 +189,12 @@ credentials for the next start.
 ### Local HTTP server
 
 The local server binds to `127.0.0.1` and `::1` by default. Relay mode starts this server too, in the
-foreground and in the background service. Without a token, any program on this machine, under any user
-account, can call the tools. On a shared machine, start with `--token <value>`. Binding any other
+foreground and in the background service, and there it always requires a bearer token: the first
+`npx junis` generates one, prints it once and saves it as `local_token` in `~/.junis/config.json`
+(`--token <value>` sets your own). A background service started from an older config without a saved
+token uses a token that is not written anywhere, so no program can call it until `npx junis` has run
+once. With `--local` the token is optional: without one, any program on this machine, under any user
+account, can call the tools, so on a shared machine start with `--token <value>`. Binding any other
 address requires a bearer token. Even without a token, requests that come from a web page (they carry
 an `Origin` header) are refused, so a page open in your browser cannot call the tools. The `Host`
 header is checked on every request.
