@@ -7,7 +7,7 @@ import { authenticate, ensureTeam, revokeDevice } from "./auth.js";
 import { RelayClient } from "../relay/client.js";
 import { startMCPServer, handleMCPRequest, setRelayClient } from "../server/mcp.js";
 import { startStdioServer } from "../server/stdio.js";
-import { resolveLocalServerSettings, generateLocalToken, type ResolvedLocalServer } from "../server/local-settings.js";
+import { resolveLocalServerSettings, generateLocalToken, type ResolvedLocalServer, savedTokenFor } from "../server/local-settings.js";
 import { DEFAULT_HOST, DEFAULT_PORT, displayHost, formatHostForUrl, isLoopbackHost, isUnspecifiedHost, listInterfaceAddresses } from "../server/http.js";
 import { runLogout } from "./logout.js";
 import { execSync } from "child_process";
@@ -123,20 +123,26 @@ function printEndpoint(local: ResolvedLocalServer, resolved: boolean): void {
   if (local.token) {
     if (local.generated) {
       console.log(` ◉ Bearer token (NEW) ........... ${local.token}`);
-      console.log("   Shown once. Saved to ~/.junis/config.json (local_token) — every request must send it:");
+      console.log(localSettingsSaved
+        ? "   Saved to ~/.junis/config.json — every local HTTP request must send it (show it again: npx junis token):"
+        : "   NOT saved (see the warning above) — it is valid for this run only. Every local HTTP request must send it:");
     } else {
-      console.log(" ◉ Bearer token ................. required (configured in ~/.junis/config.json)");
+      console.log(" ◉ Bearer token ................. required (saved in ~/.junis/config.json; show it: npx junis token)");
     }
     console.log(`   claude mcp add --transport http junis-device ${url} --header "Authorization: Bearer ${local.generated ? local.token : "<token>"}"`);
   }
   console.log("");
 }
 
+/** False when this run's local server settings could not be written — the endpoint lines then say so instead of "Saved to". */
+let localSettingsSaved = true;
+
 /**
  * Resolve the binding from --host/--port/--token flags plus config local_*, and remember flag values in the config.
  * Generates a token here when binding to a non-loopback address without one, and in relay modes (the loopback
  * server is always token-protected there; printEndpoint prints a new token once). --local keeps the token optional.
  */
+
 function resolveLocalServerForRun(
   options: { host?: string; port?: string; token?: string | false },
   opts: { daemon: boolean; relay: boolean }
@@ -166,6 +172,7 @@ function resolveLocalServerForRun(
     try {
       saveLocalServerSettings(local.persist);
     } catch (e) {
+      localSettingsSaved = false;
       console.warn(`⚠️  Could not save local server settings: ${(e as Error).message}`);
     }
   }
@@ -318,7 +325,7 @@ program
   .option("--port <number>", `Local MCP server port (default: ${DEFAULT_PORT}; remembered in ~/.junis/config.json)`)
   .option("--host <addr>", `Bind address (default: ${DEFAULT_HOST}, loopback only). Any other address requires a bearer token (--token or auto-generated, printed once)`)
   .option("--token <value>", "Bearer token required on every POST /mcp (Authorization: Bearer <value>). Remembered in ~/.junis/config.json")
-  .option("--no-token", "Forget a remembered token (loopback only)")
+  .option("--no-token", "Forget a remembered token (--local on loopback only; refused in relay mode)")
   .option("--reset", "Clear existing credentials and re-login")
   .option("--daemon", "Run in daemon mode (internal, used by launchd/systemd)")
   .option("--foreground", "Run in foreground mode (no prompt)")
@@ -338,8 +345,11 @@ program
     const local = resolveLocalServerForRun(options, { daemon: Boolean(options.daemon), relay: !options.local && !options.stdio });
 
 
-    // --foreground: run in the foreground immediately, without prompts
-    if (options.foreground) {
+    // --foreground: run in the foreground immediately, without prompts.
+    // Not with --local: `--local` is already a foreground run and must never connect to the cloud. Before 0.5.3 the
+    // combination `--local --foreground` took this branch — it logged in and joined the relay while the token logic
+    // above treated the run as local-only (no token required), leaving a relay-connected server unprotected.
+    if (options.foreground && !options.local) {
       guardServerUrls();
       printBanner();
 
@@ -559,6 +569,15 @@ program
     if (running) {
       console.log(`✅ Junis is running. (PID: ${pid})`);
       console.log("   To stop: npx junis stop");
+      if (local.token && local.generated) {
+        // A token was generated just now (first run of a version that protects the local server). The running
+        // service picks it up when it next restarts; local HTTP clients must send it from then on.
+        console.log("");
+        console.log(` ◉ Bearer token (NEW) ........... ${local.token}`);
+        console.log(`   ${localSettingsSaved ? "Saved to ~/.junis/config.json" : "NOT saved (see the warning above)"}. The running service does not use it until it restarts —`);
+        console.log("   restart it to apply: npx junis stop, then npx junis. From then on local HTTP clients must send it");
+        console.log("   (show it again: npx junis token). The junis.ai relay is not affected.");
+      }
       return;
     }
 
@@ -755,10 +774,36 @@ program
       console.log("   To start: npx junis");
     }
     const localSettings = loadLocalServerSettings();
-    if (localSettings.local_host || localSettings.local_port || localSettings.local_token) {
+    // What a normal (junis.ai-connected) start would use; `--local` only uses local_token.
+    const savedToken = savedTokenFor(localSettings, true)?.token;
+    if (localSettings.local_host || localSettings.local_port || savedToken) {
       const host = localSettings.local_host ?? DEFAULT_HOST;
       const port = localSettings.local_port ?? DEFAULT_PORT;
-      console.log(`   Local MCP: ${endpointUrl(host, port)}${isLoopbackHost(host) ? "" : " (bind " + formatHostForUrl(host) + ")"}${localSettings.local_token ? " — bearer token required" : ""}`);
+      console.log(`   Local MCP: ${endpointUrl(host, port)}${isLoopbackHost(host) ? "" : " (bind " + formatHostForUrl(host) + ")"}${savedToken ? " — bearer token required (npx junis token)" : ""}`);
+    }
+  });
+
+program
+  .command("token")
+  .description("Print the bearer token of the local MCP server (for a local HTTP MCP client)")
+  .action(() => {
+    const s = loadLocalServerSettings();
+    const found = savedTokenFor(s, true);
+    if (!found) {
+      console.log("No token is saved yet. Run `npx junis` once — it generates one for the local MCP server.");
+      return;
+    }
+    const url = endpointUrl(s.local_host ?? DEFAULT_HOST, s.local_port ?? DEFAULT_PORT);
+    console.log(found.token);
+    console.log("");
+    console.log(`claude mcp add --transport http junis-device ${url} --header "Authorization: Bearer ${found.token}"`);
+    if (found.key === "local_relay_token") {
+      // generated for the junis.ai-connected server; a `--local` server on loopback runs without a token,
+      // while a non-loopback host reuses this same token in every mode (resolveLocalServerSettings)
+      console.log("");
+      console.log(isLoopbackHost(s.local_host ?? DEFAULT_HOST)
+        ? "This token is used when junis is connected to junis.ai (npx junis). `npx junis --local` needs none."
+        : "This token is used for every local MCP connection on this host, including `npx junis --local`.");
     }
   });
 
@@ -775,9 +820,12 @@ Examples:
   npx junis stop                Stop background service
   npx junis logout              Revoke device on the server, stop the service, clear credentials
   npx junis status              Check current status
+  npx junis token               Print the local MCP server's bearer token
 
 --host/--port/--token are remembered in ~/.junis/config.json (local_host/local_port/local_token) so
-the background service and later runs bind the same way. --no-token forgets the token (loopback only).
+the background service and later runs bind the same way. --no-token forgets the token (--local on loopback only).
+When connected to junis.ai the local server always requires a token; one is generated on the first start
+(saved as local_relay_token, printed by "npx junis token").
 
 MCP Client Config (Claude Code, Claude Desktop, Codex, etc.):
   {
@@ -790,9 +838,10 @@ MCP Client Config (Claude Code, Claude Desktop, Codex, etc.):
   }
 
 HTTP transport (server started separately):
-  same machine, no token:   claude mcp add --transport http junis-device http://localhost:3000/mcp
-  with --host / token:      claude mcp add --transport http junis-device http://<addr>:3000/mcp \\
-                              --header "Authorization: Bearer <token>"
+  --local, no token set:    claude mcp add --transport http junis-device http://localhost:3000/mcp
+  connected to junis.ai, --host, or a token:
+                            claude mcp add --transport http junis-device http://<addr>:3000/mcp \\
+                              --header "Authorization: Bearer <token>"     (token: npx junis token)
 `);
 
 program.parse();

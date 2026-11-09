@@ -86,7 +86,7 @@ describe("summarizeArgs", () => {
     assert.ok(audit.summarizeArgs("execute_command", { command: "y".repeat(400) }).length <= 200);
   });
 
-  test("policy-checked read tools (2026-11-06) log the path or URL, not just key names", () => {
+  test("policy-checked read tools log the path or URL, not just key names", () => {
     assert.equal(audit.summarizeArgs("list_directory", { path: "/tmp/d" }), "/tmp/d");
     assert.equal(audit.summarizeArgs("notebook_read", { path: "/tmp/n.ipynb" }), "/tmp/n.ipynb");
     assert.equal(audit.summarizeArgs("search_code", { pattern: "SECRET", directory: "/tmp/d", file_pattern: "**/*" }), "directory=/tmp/d");

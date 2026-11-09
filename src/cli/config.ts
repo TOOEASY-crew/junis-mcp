@@ -11,6 +11,8 @@ export interface LocalServerSettings {
   local_host?: string;
   local_port?: number;
   local_token?: string;
+  /** Token generated for relay mode's loopback server. Kept apart from local_token so `--local` is unaffected. */
+  local_relay_token?: string;
 }
 
 export interface JunisConfig extends LocalServerSettings {
@@ -26,7 +28,7 @@ export type LocalServerSettingsPatch = {
 };
 
 const CREDENTIAL_KEYS = ["device_key", "token", "device_name", "created_at"] as const;
-const LOCAL_KEYS = ["local_host", "local_port", "local_token"] as const;
+const LOCAL_KEYS = ["local_host", "local_port", "local_token", "local_relay_token"] as const;
 
 function readRaw(): Record<string, unknown> | null {
   try {
@@ -64,6 +66,7 @@ function pickLocalSettings(raw: Record<string, unknown> | null): LocalServerSett
   if (typeof raw.local_host === "string") out.local_host = raw.local_host;
   if (typeof raw.local_port === "number" && Number.isInteger(raw.local_port)) out.local_port = raw.local_port;
   if (typeof raw.local_token === "string") out.local_token = raw.local_token;
+  if (typeof raw.local_relay_token === "string") out.local_relay_token = raw.local_relay_token;
   return out;
 }
 

@@ -4,15 +4,22 @@
 
 ### Security
 - **Relay mode always protects the local HTTP server with a bearer token.** `npx junis` (foreground or
-  background) generates a token on the first start without one, prints it once and saves it as
-  `local_token` in `~/.junis/config.json`; `--no-token` is refused in relay mode. A background service
-  started from an older config without a saved token uses a token that is not written anywhere until
-  `npx junis` has run once. `--local` behaves as before: the token is optional on loopback.
+  background) generates a token on the first start without one, prints it and saves it as
+  `local_relay_token` in `~/.junis/config.json`; `npx junis token` prints it again, with the
+  `claude mcp add` line for a local HTTP client. `--no-token` is refused in relay mode. A background
+  service started from an older config without a saved token uses a token that is not written anywhere
+  until it is restarted (`npx junis stop`, then `npx junis`). The junis.ai relay itself is unaffected — it
+  passes the token in-process. `--local` on loopback is unchanged: the token is optional unless you set one
+  with `--token` (the relay token has its own key, so a relay run does not change `--local`). **If you pointed a local HTTP MCP client at a relay-mode
+  `http://localhost:3000/mcp` without a token, add the header shown by `npx junis token`.**
+- **`--local --foreground` no longer connects to the cloud.** The combination used to take the relay path — it
+  logged in and joined the relay while being treated as local-only, so the local server came up without a
+  token. `--local` now always wins: local server only, no login.
 - **`deny_read_paths` covers more tools and more files.** `list_directory` and `search_code` are refused
   on a denied directory, lines from denied files are dropped from `search_code` results, `notebook_read`,
-  `notebook_edit_cell` and `notebook_execute` are checked, and `browser_navigate` refuses a `file://` URL
+  `notebook_edit_cell`, `notebook_add_cell`, `notebook_delete_cell` and `notebook_execute` are checked, and `browser_navigate` refuses a `file://` URL
   that points at a denied path. Patterns match without regard to case on macOS and Windows, where the file
-  system does the same (`~/.SSH/ID_rsa` was readable before). The default list now also includes
+  system does the same by default (`~/.SSH/ID_rsa` was readable before). The default list now also includes
   `~/.ssh/*.pem`, `~/.junis-kit/credentials.json`, `~/.kube/config`, `~/.azure/**`, `~/.config/gh/hosts.yml`,
   `~/.npmrc`, `~/.docker/config.json`, `~/.netrc`, `~/.pgpass`, `~/.git-credentials` and Firefox
   `cookies.sqlite` / `logins.json`. A refused call is written to the audit log with the path or URL.

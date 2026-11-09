@@ -15,7 +15,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 
-/** macOS and Windows compare paths without regard to case, so a pattern must too (2026-11-06). */
+/** macOS and Windows compare paths without regard to case by default, so a pattern must too. */
 const CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
 
 export interface Policy {
@@ -216,26 +216,103 @@ function pathCandidates(p: string): string[] {
 export function isReadDenied(filePath: string, policy: Policy = loadPolicy().policy, asDirectory = false): string | null {
   const candidates = pathCandidates(filePath);
   if (asDirectory) for (const c of [...candidates]) candidates.push(c + path.sep + "_");
-  for (const pattern of policy.deny_read_paths) {
-    for (const expanded of expandHome(pattern)) {
-      let re: RegExp;
-      try {
-        re = globToRegExp(expanded);
-      } catch {
-        continue;
-      }
-      if (candidates.some((c) => re.test(c))) return pattern;
-    }
+  const forMatch = candidates.map((c) => toMatchSeparators(c));
+  for (const { pattern, re } of compiledDenyPatterns(policy)) {
+    if (forMatch.some((c) => re.test(c))) return pattern;
   }
   return null;
 }
 
-/** Drop `path:line: text` lines whose file is read-denied (search_code output). */
+/**
+ * Globs are written with "/" (and "*" stops at "/"), so on Windows both the patterns and the candidate paths are
+ * compared with "/" separators — otherwise "~/.ssh/**" never matches "C:\\Users\\me\\.ssh\\id_rsa". No-op elsewhere.
+ * `sep` is a parameter so the Windows form can be tested on any platform.
+ */
+export function toMatchSeparators(p: string, sep: string = path.sep): string {
+  return sep === "\\" ? p.replace(/\\/g, "/") : p;
+}
+
+/**
+ * deny_read_paths compiled once per policy object. Compiling per call cost a home-directory realpath and a new
+ * RegExp for every pattern on every path — about 1 ms per line when filtering search results (10,000 hits froze
+ * the daemon for 10+ seconds).
+ */
+const compiledDenyCache = new WeakMap<readonly string[], { pattern: string; re: RegExp }[]>();
+
+function compiledDenyPatterns(policy: Policy): { pattern: string; re: RegExp }[] {
+  let compiled = compiledDenyCache.get(policy.deny_read_paths);
+  if (!compiled) {
+    compiled = [];
+    for (const pattern of policy.deny_read_paths) {
+      for (const expanded of expandHome(pattern)) {
+        try {
+          compiled.push({ pattern, re: globToRegExp(toMatchSeparators(expanded)) });
+        } catch {
+          // an invalid pattern is skipped; the others still apply
+        }
+      }
+    }
+    compiledDenyCache.set(policy.deny_read_paths, compiled);
+  }
+  return compiled;
+}
+
+/** Drop `path:line: text` lines whose file is read-denied (search_code output). Each distinct file is checked once. */
 export function filterDeniedPaths(lines: string[], policy: Policy = loadPolicy().policy): string[] {
+  const verdicts = new Map<string, boolean>();
   return lines.filter((line) => {
     const m = /^(.+?):\d+:/.exec(line);
-    return !(m && isReadDenied(m[1], policy));
+    if (!m) return true;
+    let denied = verdicts.get(m[1]);
+    if (denied === undefined) {
+      denied = isReadDenied(m[1], policy) !== null;
+      verdicts.set(m[1], denied);
+    }
+    return !denied;
   });
+}
+
+/**
+ * The local path a browser URL reads, or null when it is not a file URL. Handles the spellings a browser accepts:
+ * surrounding whitespace, `view-source:file://…`, and a host part (`file://host/path` — fileURLToPath refuses a
+ * non-local host on POSIX, but Chromium still opens the path).
+ */
+export function fileUrlToLocalPath(url: string): string | null {
+  // Normalise the way the URL parser does before it looks at the scheme: tab / CR / LF are removed anywhere,
+  // and leading or trailing C0 controls and spaces are stripped ("fi\tle:///…" and "\u0001file:///…" are file URLs).
+  // eslint-disable-next-line no-control-regex
+  const clean = (v: string): string => v.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
+  let u = clean(url);
+  while (/^view-source:/i.test(u)) u = clean(u.slice("view-source:".length)); // the prefix can be repeated
+  let parsed: URL;
+  try {
+    parsed = new URL(u);
+  } catch {
+    return null; // not an absolute URL: the browser will not open a local file from it
+  }
+  if (parsed.protocol !== "file:") return null;
+  try {
+    return fileURLToPath(parsed);
+  } catch {
+    // A host part (file://host/path) or a malformed escape (%z): still a file URL, so still derive a path to check.
+    // Decode well-formed %XX escapes as **UTF-8 bytes** (a Latin-1 decode turns "Privé" into mojibake and a deny
+    // pattern with a non-ASCII segment, or a non-ASCII home directory, would no longer match); leave the rest as written.
+    const bytes: number[] = [];
+    const raw = parsed.pathname;
+    for (let i = 0; i < raw.length; ) {
+      const hex = raw[i] === "%" ? raw.slice(i + 1, i + 3) : "";
+      if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+        bytes.push(parseInt(hex, 16));
+        i += 3;
+      } else {
+        const cp = raw.codePointAt(i) as number;
+        const ch = String.fromCodePoint(cp);
+        for (const b of Buffer.from(ch, "utf8")) bytes.push(b);
+        i += ch.length;
+      }
+    }
+    return Buffer.from(bytes).toString("utf8") || "/";
+  }
 }
 
 // ── command guards ───────────────────────────────────────────────────────────────────────
@@ -315,14 +392,13 @@ const FILE_READ_TOOLS: Record<string, (args: Record<string, unknown>) => string[
   search_code: (a) => (typeof a.directory === "string" ? [a.directory] : []),
   notebook_read: (a) => (typeof a.path === "string" ? [a.path] : []),
   notebook_edit_cell: (a) => (typeof a.path === "string" ? [a.path] : []),
+  notebook_add_cell: (a) => (typeof a.path === "string" ? [a.path] : []),
+  notebook_delete_cell: (a) => (typeof a.path === "string" ? [a.path] : []),
   notebook_execute: (a) => (typeof a.path === "string" ? [a.path] : []),
   browser_navigate: (a) => {
-    if (typeof a.url !== "string" || !a.url.toLowerCase().startsWith("file:")) return [];
-    try {
-      return [fileURLToPath(a.url)];
-    } catch {
-      return [];
-    }
+    if (typeof a.url !== "string") return [];
+    const local = fileUrlToLocalPath(a.url);
+    return local ? [local] : [];
   },
 };
 

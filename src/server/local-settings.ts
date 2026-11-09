@@ -10,6 +10,12 @@ export interface LocalServerSettings {
   local_host?: string;
   local_port?: number;
   local_token?: string;
+  /**
+   * Token generated for relay mode's loopback server (0.5.3). It has its own key because local_token is shared with
+   * `--local`: writing a relay-generated token there would turn a later `npx junis --local` into a token-enforced
+   * server, although `--local` on loopback has always been token-optional.
+   */
+  local_relay_token?: string;
 }
 
 export interface LocalServerFlags {
@@ -37,7 +43,7 @@ export interface ResolvedLocalServer {
 export interface ResolveOptions {
   /** Called for a non-loopback host without a token. If absent (daemon), fall back to loopback and only log a warning. */
   generateToken?: () => string;
-  /** Relay modes: the loopback server is always token-protected (2026-11-06). */
+  /** Relay modes: the loopback server is always token-protected. */
   requireToken?: boolean;
 }
 
@@ -59,6 +65,16 @@ function validPort(v: unknown): v is number {
 
 function validToken(v: unknown): v is string {
   return typeof v === "string" && v.length > 0 && TOKEN_RE.test(v);
+}
+
+/**
+ * The saved token a start in the given mode would use, by the same rules as resolveLocalServerSettings (an invalid
+ * saved value is ignored, exactly as the server ignores it). `relay` = connected to junis.ai; false = `--local`.
+ */
+export function savedTokenFor(saved: LocalServerSettings, relay: boolean): { token: string; key: "local_token" | "local_relay_token" } | null {
+  if (validToken(saved.local_token)) return { token: saved.local_token, key: "local_token" };
+  if (relay && validToken(saved.local_relay_token)) return { token: saved.local_relay_token, key: "local_relay_token" };
+  return null;
 }
 
 export function resolveLocalServerSettings(
@@ -104,19 +120,28 @@ export function resolveLocalServerSettings(
     token = flags.token;
     persist.local_token = token;
   } else {
+    // An explicit local_token (set with --token, or generated for a non-loopback bind) applies to every mode.
     token = validToken(saved.local_token) ? saved.local_token : undefined;
+    if (token === undefined && opts.requireToken && validToken(saved.local_relay_token)) token = saved.local_relay_token;
   }
+
+  // A non-loopback bind needs a token in every mode. If relay mode already generated one, reuse it instead of
+  // creating a second: a new local_token would take precedence over it and change the relay server's token on its
+  // next restart, breaking clients that were configured with the relay token.
+  if (token === undefined && !isLoopbackHost(host) && validToken(saved.local_relay_token)) token = saved.local_relay_token;
 
   if (token === undefined && (opts.requireToken || !isLoopbackHost(host))) {
     if (opts.generateToken) {
       token = opts.generateToken();
       generated = true;
-      persist.local_token = token;
+      // Non-loopback binds need a token in every mode (as before). A loopback relay server gets the relay-only key.
+      if (isLoopbackHost(host)) persist.local_relay_token = token;
+      else persist.local_token = token;
     } else if (opts.requireToken) {
       // daemon started from an older config: protect the server for this run, do not write the config from the daemon
       token = generateLocalToken();
       warnings.push(
-        "Local MCP server: no local_token in ~/.junis/config.json — using an ephemeral token for this run (run `npx junis` once to generate and save one)"
+        "Local MCP server: no token in ~/.junis/config.json — using an ephemeral token for this run (restart to save one: `npx junis stop`, then `npx junis`)"
       );
     } else {
       warnings.push(

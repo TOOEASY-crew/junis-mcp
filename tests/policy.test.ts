@@ -171,7 +171,7 @@ describe("isCommandDenied", () => {
   });
 });
 
-describe("deny_read_paths hardening (2026-11-06)", () => {
+describe("deny_read_paths hardening", () => {
   test("defaults include the kit key, kube/azure/gh/npm/docker credentials and Firefox cookies", () => {
     const d = pol.DEFAULT_DENY_READ_PATHS;
     for (const p of ["~/.junis-kit/credentials.json", "~/.kube/config", "~/.azure/**", "~/.config/gh/hosts.yml", "~/.npmrc", "~/.docker/config.json", "~/.netrc", "~/.pgpass", "~/.git-credentials", "~/.ssh/*.pem"]) {
@@ -192,6 +192,10 @@ describe("deny_read_paths hardening (2026-11-06)", () => {
     assert.ok(pol.evaluatePolicy("list_directory", { path: path.join(home, ".ssh") }));
     assert.ok(pol.evaluatePolicy("search_code", { directory: path.join(home, ".ssh") }));
     assert.ok(pol.evaluatePolicy("notebook_read", { path: path.join(home, ".ssh", "x.ipynb") }));
+    for (const tool of ["notebook_edit_cell", "notebook_add_cell", "notebook_delete_cell", "notebook_execute"]) {
+      assert.ok(pol.evaluatePolicy(tool, { path: path.join(home, ".ssh", "x.ipynb") }), tool);
+      assert.equal(pol.evaluatePolicy(tool, { path: path.join(home, "work", "x.ipynb") }), null, tool);
+    }
     assert.ok(pol.evaluatePolicy("browser_navigate", { url: "file://" + path.join(home, ".ssh", "id_rsa") }));
     assert.equal(pol.evaluatePolicy("browser_navigate", { url: "https://example.com" }), null);
     assert.equal(pol.evaluatePolicy("list_directory", { path: home }), null);
@@ -201,6 +205,62 @@ describe("deny_read_paths hardening (2026-11-06)", () => {
     writePolicy({ deny_read_paths: ["~/.ssh/**"] });
     const lines = [`${path.join(home, ".ssh", "id_rsa")}:1: secret`, `${path.join(home, "proj", "a.ts")}:3: ok`];
     assert.deepEqual(pol.filterDeniedPaths(lines), [lines[1]]);
+  });
+
+  test("filterDeniedPaths stays fast on large results (patterns compiled once, each file checked once)", () => {
+    const home = os.homedir();
+    writePolicy({ deny_read_paths: ["~/.ssh/**"] });
+    const policy = pol.loadPolicy().policy;
+    const many: string[] = [];
+    for (let i = 0; i < 20000; i++) many.push(`${path.join(home, "proj", "src", `f${i % 200}.ts`)}:${i}: const x = ${i}`);
+    many.push(`${path.join(home, ".ssh", "id_rsa")}:1: secret`);
+    const t0 = Date.now();
+    const kept = pol.filterDeniedPaths(many, policy);
+    const ms = Date.now() - t0;
+    assert.equal(kept.length, 20000);
+    // before: about 1.2 ms per line (24 s for this input). Generous bound so a slow CI machine does not flake.
+    assert.ok(ms < 3000, `filterDeniedPaths took ${ms} ms for 20,001 lines`);
+  });
+
+  test("browser file URLs in every spelling the browser accepts are checked", () => {
+    const home = os.homedir();
+    writePolicy({ deny_read_paths: ["~/.ssh/**"] });
+    const key = path.join(home, ".ssh", "id_rsa");
+    for (const url of [`file://${key}`, `  file://${key}`, `view-source:file://${key}`, `VIEW-SOURCE:FILE://${key}`, `file://otherhost${key}`,
+                       // the original bypasses: a loopback host part, an escaped dot, a single-slash file URL
+                       `file://127.0.0.1${key}`, `file://${key.replace("/.ssh/", "/%2Essh/")}`, `file:${key}`]) {
+      assert.ok(pol.evaluatePolicy("browser_navigate", { url }), url);
+    }
+    // the URL parser drops tab/CR/LF anywhere and leading control characters before reading the scheme
+    for (const url of [`fi\tle://${key}`, `\u0001file://${key}`, `file:\n//${key}`, `view-source:\tfile://${key}`]) {
+      assert.ok(pol.evaluatePolicy("browser_navigate", { url }), JSON.stringify(url));
+    }
+    // a malformed escape elsewhere in the path must not make the URL unchecked
+    assert.equal(pol.fileUrlToLocalPath(`file://${path.join(home, ".ssh")}/100%z/id_rsa`), `${path.join(home, ".ssh")}/100%z/id_rsa`);
+    assert.ok(pol.evaluatePolicy("browser_navigate", { url: `file://${path.join(home, ".ssh")}/100%z/id_rsa` }));
+    assert.equal(pol.fileUrlToLocalPath("not a url"), null);
+    assert.ok(pol.evaluatePolicy("browser_navigate", { url: `view-source:view-source:file://${key}` }));
+    // non-ASCII path segments survive the fallback decode (host part / malformed escape) as UTF-8
+    assert.equal(pol.fileUrlToLocalPath("file://otherhost/Users/me/Privé/key.pem"), "/Users/me/Privé/key.pem");
+    assert.equal(pol.fileUrlToLocalPath("file://otherhost/Users/me/Priv%C3%A9/key.pem"), "/Users/me/Privé/key.pem");
+    assert.equal(pol.fileUrlToLocalPath("file:///Users/me/Privé/100%z/key.pem"), "/Users/me/Privé/100%z/key.pem");
+    writePolicy({ deny_read_paths: ["~/Privé/**"] });
+    const hidden = path.join(home, "Privé", "key.pem");
+    for (const url of [`file://${hidden}`, `file://otherhost${hidden}`, `file://${path.join(home, "Privé")}/100%z/key.pem`]) {
+      assert.ok(pol.evaluatePolicy("browser_navigate", { url }), url);
+    }
+    writePolicy({ deny_read_paths: ["~/.ssh/**"] });
+    assert.equal(pol.fileUrlToLocalPath("https://example.com/file:///x"), null);
+    assert.equal(pol.fileUrlToLocalPath("  about:blank"), null);
+    assert.equal(pol.evaluatePolicy("browser_navigate", { url: `file://${path.join(home, "proj", "index.html")}` }), null);
+  });
+
+  test("Windows separators: patterns and paths are compared with forward slashes", () => {
+    assert.equal(pol.toMatchSeparators("C:\\Users\\me\\.ssh\\id_rsa", "\\"), "C:/Users/me/.ssh/id_rsa");
+    assert.equal(pol.toMatchSeparators("/home/me/a\\b", "/"), "/home/me/a\\b"); // a backslash is an ordinary character on POSIX
+    const re = pol.globToRegExp(pol.toMatchSeparators("C:\\Users\\me/.ssh/**", "\\"));
+    assert.ok(re.test(pol.toMatchSeparators("C:\\Users\\me\\.ssh\\id_rsa", "\\")));
+    assert.ok(!re.test(pol.toMatchSeparators("C:\\Users\\me\\proj\\a.ts", "\\")));
   });
 });
 

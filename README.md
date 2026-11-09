@@ -70,8 +70,8 @@ npx junis --local     # http://localhost:3000/mcp, reachable from this machine o
 claude mcp add --transport http junis-device http://localhost:3000/mcp
 ```
 
-In relay mode the local server always requires a bearer token (generated once and saved to
-`~/.junis/config.json`; printed at start). `--local` keeps the token optional. See
+In relay mode the local server always requires a bearer token (generated and printed once, then saved
+in `~/.junis/config.json`; `npx junis token` prints it again). `--local` keeps the token optional. See
 [Local HTTP server](#local-http-server).
 
 ## Examples
@@ -190,10 +190,10 @@ credentials for the next start.
 
 The local server binds to `127.0.0.1` and `::1` by default. Relay mode starts this server too, in the
 foreground and in the background service, and there it always requires a bearer token: the first
-`npx junis` generates one, prints it once and saves it as `local_token` in `~/.junis/config.json`
-(`--token <value>` sets your own). A background service started from an older config without a saved
-token uses a token that is not written anywhere, so no program can call it until `npx junis` has run
-once. With `--local` the token is optional: without one, any program on this machine, under any user
+`npx junis` generates one, prints it and saves it as `local_relay_token` in `~/.junis/config.json`
+(`npx junis token` prints it again; `--token <value>` sets your own, saved as `local_token`). A background service started from an older config without a saved
+token uses a token that is not written anywhere, so no program can call it until it is restarted:
+`npx junis stop`, then `npx junis`. The token is printed when it is first generated; `npx junis token` prints it again. With `--local` the token is optional: without one, any program on this machine, under any user
 account, can call the tools, so on a shared machine start with `--token <value>`. Binding any other
 address requires a bearer token. Even without a token, requests that come from a web page (they carry
 an `Origin` header) are refused, so a page open in your browser cannot call the tools. The `Host`
@@ -228,7 +228,7 @@ that names the rule.
 
 | Setting | Checked for | Notes |
 |---------|-------------|-------|
-| `deny_read_paths` | `read_file`, `edit_block`, `share_file`, `browser_upload`, `list_directory`, `search_code` (the directory, and matching lines from denied files are dropped), `notebook_read`, `notebook_edit_cell`, `notebook_execute`, `browser_navigate` with a `file://` URL | Globs with `*`, `**`, `?`, `{a,b}` and `~`. Symlinks are resolved first. Case is ignored on macOS and Windows. Your list replaces the default, and `[]` turns the check off. |
+| `deny_read_paths` | `read_file`, `edit_block`, `share_file`, `browser_upload`, `list_directory`, `search_code` (the directory, and matching lines from denied files are dropped), `notebook_read`, `notebook_edit_cell`, `notebook_add_cell`, `notebook_delete_cell`, `notebook_execute`, `browser_navigate` with a `file://` URL | Globs with `*`, `**`, `?`, `{a,b}` and `~`. Symlinks are resolved first. Case is ignored on macOS and Windows (they compare paths that way by default). Your list replaces the default, and `[]` turns the check off. |
 | `deny_command_patterns` | `execute_command`, `cron_create` | Regular expressions matched against the command. |
 | `builtin_command_guards` | `execute_command`, `cron_create` | On by default. Refuses only destructive forms: `rm -rf /`, `mkfs`, `dd … of=/dev/…`, the fork bomb and redirects to a raw disk device. |
 | `read_only` | `write_file`, `edit_block`, `execute_command`, `cron_create`, `cron_delete`, `kill_process`, `browser_upload`, `share_file`, `notebook_edit_cell`, `notebook_add_cell`, `notebook_delete_cell`, `notebook_execute` | `true` refuses these 12 tools. |
@@ -237,9 +237,12 @@ What the policy file does not cover:
 
 - Path rules check the path a file tool is given. They do not look inside shell commands, so
   `execute_command` can still read a listed file unless a command rule or `read_only` stops it.
-- `write_file`, `list_directory`, `search_code` and `notebook_read` are not path-checked.
-- Browser, desktop, clipboard, camera, screen, location, audio and notification tools are not limited
-  by the policy file, including with `read_only: true`.
+- `write_file` is not path-checked. `list_directory` lists the names inside a directory unless the
+  directory itself is denied (with the defaults, `~/.ssh` can be listed; only the key files in it are denied).
+- Browser, desktop, clipboard, camera, screen, location, audio and notification tools are not limited by
+  the policy file, including with `read_only: true`, except `browser_upload` and the URL given to
+  `browser_navigate`. A `file://` page the browser reaches another way, such as a link clicked with
+  `browser_click` or a script run with `browser_evaluate`, is not checked.
 - `browser_cookies` and `browser_storage` read the cookies and site storage of the profile the browser
   runs with, whatever the path rules say.
 - Unless `read_only` is true, an agent can rewrite `~/.junis/policy.json` or the audit log with
@@ -252,9 +255,10 @@ For a hard boundary, run `junis` under a separate OS user account that cannot se
 `~/.junis/logs/audit.jsonl` is owner-only and rotates to `audit.jsonl.1` at 5 MB. Each shell command,
 file write, block edit, file share, process kill, cron change and browser upload is logged with its
 outcome: `ok`, `error` or `denied` (refused by the policy). Notebook edits and runs are logged only when
-`read_only` refused them, and file reads only when a path rule refused them. Other browser actions,
-desktop actions and device tools are not logged. Each line has the time, the tool, a short summary of
-the arguments (path, command or PID) and the outcome. File contents and command output are never
+the policy refused them; file reads, directory listings, code searches and `browser_navigate` only when
+a path rule refused them. Other browser actions, desktop actions and device tools are not logged. Each
+line has the time, the tool, a short summary of the arguments (path, directory, URL, command or PID) and
+the outcome. File contents and command output are never
 written. `JUNIS_AUDIT_LOG=0` turns the log off.
 
 To report a vulnerability, see [SECURITY.md](./SECURITY.md).

@@ -1,7 +1,7 @@
 // tests/local-settings.test.ts: precedence of --host/--port/--token over config fields, and token generation rules
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { resolveLocalServerSettings, generateLocalToken } from "../src/server/local-settings.js";
+import { resolveLocalServerSettings, generateLocalToken, savedTokenFor } from "../src/server/local-settings.js";
 
 const gen = () => "GENERATED";
 
@@ -91,7 +91,30 @@ describe("resolveLocalServerSettings", () => {
     assert.equal(r.host, "127.0.0.1");
     assert.equal(r.token, "GEN-RELAY");
     assert.equal(r.generated, true);
-    assert.deepEqual(r.persist, { local_token: "GEN-RELAY" });
+    // its own key: local_token is shared with --local, which must stay token-optional on loopback
+    assert.deepEqual(r.persist, { local_relay_token: "GEN-RELAY" });
+  });
+  test("a relay-generated token does not turn --local into a token-enforced server", () => {
+    const saved = { local_relay_token: "GEN-RELAY" };
+    const local = resolveLocalServerSettings({}, saved, { generateToken: () => "X" }); // --local: requireToken unset
+    assert.equal(local.token, undefined);
+    assert.deepEqual(local.persist, {});
+    const relay = resolveLocalServerSettings({}, saved, { generateToken: () => "X", requireToken: true });
+    assert.equal(relay.token, "GEN-RELAY");
+    assert.equal(relay.generated, false);
+    assert.deepEqual(relay.persist, {});
+    const daemon = resolveLocalServerSettings({}, saved, { requireToken: true }); // daemon reads the same key
+    assert.equal(daemon.token, "GEN-RELAY");
+    assert.deepEqual(daemon.warnings, []);
+  });
+  test("an explicit local_token wins over the relay-generated one in relay mode", () => {
+    const r = resolveLocalServerSettings({}, { local_token: "mine", local_relay_token: "GEN" }, { requireToken: true });
+    assert.equal(r.token, "mine");
+  });
+  test("relay mode on a non-loopback host still saves the generated token as local_token", () => {
+    const r = resolveLocalServerSettings({ host: "0.0.0.0" }, {}, { generateToken: () => "GEN-LAN", requireToken: true });
+    assert.equal(r.token, "GEN-LAN");
+    assert.deepEqual(r.persist, { local_host: "0.0.0.0", local_token: "GEN-LAN" });
   });
   test("relay mode keeps a saved token and persists nothing", () => {
     const r = resolveLocalServerSettings({}, { local_token: "saved" }, { generateToken: () => "X", requireToken: true });
@@ -106,6 +129,26 @@ describe("resolveLocalServerSettings", () => {
   });
   test("--no-token in relay mode is refused", () => {
     assert.throws(() => resolveLocalServerSettings({ token: false }, {}, { requireToken: true }), /relay mode/);
+  });
+
+  test("a non-loopback --local run reuses the relay token instead of minting a second one", () => {
+    const saved = { local_host: "0.0.0.0", local_relay_token: "R" };
+    const local = resolveLocalServerSettings({}, saved, { generateToken: () => "NEW" });
+    assert.equal(local.token, "R");
+    assert.equal(local.generated, false);
+    assert.deepEqual(local.persist, {});
+    const relay = resolveLocalServerSettings({}, saved, { generateToken: () => "NEW", requireToken: true });
+    assert.equal(relay.token, "R");
+  });
+
+  test("savedTokenFor follows the server's own rules", () => {
+    assert.deepEqual(savedTokenFor({ local_relay_token: "R" }, true), { token: "R", key: "local_relay_token" });
+    assert.equal(savedTokenFor({ local_relay_token: "R" }, false), null); // --local does not use the relay token
+    assert.deepEqual(savedTokenFor({ local_token: "L", local_relay_token: "R" }, true), { token: "L", key: "local_token" });
+    // an invalid local_token is ignored by the server, so it must not hide the relay token that is actually used
+    assert.deepEqual(savedTokenFor({ local_token: "", local_relay_token: "R" }, true), { token: "R", key: "local_relay_token" });
+    assert.deepEqual(savedTokenFor({ local_token: "has space", local_relay_token: "R" }, true), { token: "R", key: "local_relay_token" });
+    assert.equal(savedTokenFor({}, true), null);
   });
 
   test("generateLocalToken is base64url, 32 chars, unique", () => {
