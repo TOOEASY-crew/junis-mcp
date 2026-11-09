@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.3 — 2026-11-06
+## 0.5.3 — 2026-11-09
 
 ### Security
 - **Relay mode always protects the local HTTP server with a bearer token.** `npx junis` (foreground or

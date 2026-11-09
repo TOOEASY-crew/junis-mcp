@@ -8,7 +8,7 @@ describe("isAllowedUploadUrl", () => {
     for (const u of [
       "https://junis.ai/upload/x",
       "https://files.junis.ai/x?sig=1",
-      "https://junisstorage.blob.core.windows.net/container/key?sv=2024&sig=abc",
+      "https://acct.blob.core.windows.net/container/key?sv=2024&sig=abc",
     ]) {
       assert.equal(isAllowedUploadUrl(u, {}).ok, true, u);
     }
