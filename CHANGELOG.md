@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.5.3 — 2026-11-09
+## 0.5.4 — 2026-11-09
+
+0.5.3 was never published: the registry kept refusing that number after an upload that did not finish. 0.5.4 is the same code.
 
 ### Security
 - **Relay mode always protects the local HTTP server with a bearer token.** `npx junis` (foreground or

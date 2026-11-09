@@ -11,7 +11,7 @@ export interface LocalServerSettings {
   local_port?: number;
   local_token?: string;
   /**
-   * Token generated for relay mode's loopback server (0.5.3). It has its own key because local_token is shared with
+   * Token generated for relay mode's loopback server (0.5.4). It has its own key because local_token is shared with
    * `--local`: writing a relay-generated token there would turn a later `npx junis --local` into a token-enforced
    * server, although `--local` on loopback has always been token-optional.
    */

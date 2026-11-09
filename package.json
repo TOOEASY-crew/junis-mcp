@@ -1,13 +1,13 @@
 {
   "name": "junis",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Local MCP server for shell, files, browser, Jupyter and macOS apps, with a policy file and audit log",
   "license": "MIT",
   "author": "TOOEASY Inc. <contact@junis.ai>",
   "homepage": "https://junis.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TOOEASY-crew/junis-mcp.git"
+    "url": "git+https://github.com/TOOEASY-crew/junis-mcp.git"
   },
   "bugs": {
     "url": "https://github.com/TOOEASY-crew/junis-mcp/issues",

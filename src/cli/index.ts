@@ -346,7 +346,7 @@ program
 
 
     // --foreground: run in the foreground immediately, without prompts.
-    // Not with --local: `--local` is already a foreground run and must never connect to the cloud. Before 0.5.3 the
+    // Not with --local: `--local` is already a foreground run and must never connect to the cloud. Before 0.5.4 the
     // combination `--local --foreground` took this branch — it logged in and joined the relay while the token logic
     // above treated the run as local-only (no token required), leaving a relay-connected server unprotected.
     if (options.foreground && !options.local) {
