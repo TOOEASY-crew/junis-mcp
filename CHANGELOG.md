@@ -2,7 +2,7 @@
 
 ## 0.5.4 — 2026-11-09
 
-0.5.3 was never published: the registry kept refusing that number after an upload that did not finish. 0.5.4 is the same code.
+Same code as 0.5.3. The 0.5.3 upload was held by the registry for a while and refused again (409), so the release was cut as 0.5.4; 0.5.3 appeared later and is identical.
 
 ### Security
 - **Relay mode always protects the local HTTP server with a bearer token.** `npx junis` (foreground or
